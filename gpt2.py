@@ -1,14 +1,16 @@
+import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from dataclasses import dataclass
+from transformers import GPT2LMHeadModel
 
 @dataclass
 class GPTConfig:
     """
     Config class to hold hyperparmeters of the model
     """
-    block_size = 1024 # max sequence lenth
-    vocab_size = 50257 # Number of tokens: 256 byte tokens + 1 <|endoftext|> token + 50,000 BPE merges
+    block_size: int = 1024 # max sequence lenth
+    vocab_size: int = 50257 # Number of tokens: 256 byte tokens + 1 <|endoftext|> token + 50,000 BPE merges
     n_layer: int = 12 # number of layers
     n_head: int = 12 # number of heads
     n_embd: int = 768 # embedding dim
@@ -144,7 +146,7 @@ class GPT2(nn.Module):
 
         # Layers of the model to be called in forward function implementation
         # transformers naming convention from sd_hf
-        self.transformers = nn.ModuleDict(dict(
+        self.transformer = nn.ModuleDict(dict(
             # wte naming convention from sd_hf, Token Embeddings
             wte = nn.Embedding(self.config.vocab_size, self.config.n_embd),
             # Position embeddings
@@ -156,3 +158,78 @@ class GPT2(nn.Module):
         ))
         self.lm_head = nn.Linear(self.config.n_embd, self.config.vocab_size, bias=False)
 
+    @classmethod
+    def from_pretrained(cls, model_type):
+        """_summary_
+
+        Loads pretrained weights from huggingface
+
+        1. Defines neural network parameters
+        2. Load Local implementation model and hf model
+        3. Load both state dicts, align keys and copy the weigts
+
+        Args:
+            model_type (str): gpt2 model types froem hugging face
+
+        """
+
+        assert model_type in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"}
+        print("Loading weights from pretrained gpt: %s" % model_type)
+
+        # Define layer parameters for gpt series models and select
+        config_args = {
+            "gpt2":         dict(n_layer=12, n_head=12, n_embd=768), # 124M params
+            "gpt2-medium":  dict(n_layer=24, n_head=16, n_embd=1024), # 350M params
+            'gpt2-large':   dict(n_layer=36, n_head=20, n_embd=1280), # 774M params
+            'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600), # 1558M params        
+        }[model_type]
+        
+        # Below params are same for all GPT2 variants
+        config_args["vocab_size"] = 50257
+        config_args["block_size"] = 1024
+
+        print(f"Config args: {config_args}")
+        # Create a from-scratch initialized minGPT model
+        config = GPTConfig(**config_args)
+        print(f"config: {config}")
+        model = GPT2(config)
+
+        # Get keys, # memory map sd_keys -> sd -> model the key copy is present inplace
+        sd = model.state_dict()
+        sd_keys = sd.keys()
+        # remove bias keys
+        sd_keys = [k for k in sd_keys if not k.endswith(".attn.bias")]
+
+        # Load huggingface/transformers model
+        model_hf = GPT2LMHeadModel.from_pretrained(model_type)
+        # Get keys
+        sd_hf = model_hf.state_dict()
+        sd_hf_keys = sd_hf.keys()
+        # Remove bias
+        sd_hf_keys = [k for k in sd_hf_keys if not k.endswith(".attn.bias")]
+        sd_hf_keys = [k for k in sd_hf_keys if not k.endswith(".attn.masked_bias")]
+        # Four keys (attn.c_attn - Attnetion linear layers), (attn.c_proj - output linear projection of attention layer)
+        # (mlp.c_fc, mlp.c_proj - MLP computation)
+        transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
+
+        assert len(sd_hf_keys) == len(sd_keys), f"Mismatched kyes: {len(sd_hf_keys)} != {len(sd_keys)}"
+
+        for k in sd_hf_keys:
+            if any(k.endswith(w) for w in transposed):
+                # Check shapes, transpose fits Conv1D wieghts to a Linear layer
+                assert sd_hf[k].shape[::-1] == sd[k].shape
+                with torch.no_grad():
+                    # Copy transposed weights from hf to scratch
+                    sd[k].copy_(sd_hf[k].t())
+            else:
+                # Match shape and vanilla copy over the other params
+                assert k in sd_hf_keys, f"{k} not in sd_hf_keys"
+                assert k in sd_keys, f"{k} not in sd"
+                assert sd_hf[k].shape == sd[k].shape, f"{k}_hf shape: {sd_hf[k].shape}, {k}_scratch shape: {sd[k].shape}"
+                with torch.no_grad():
+                    sd[k].copy_(sd_hf[k])
+
+        return model
+    
+model = GPT2.from_pretrained("gpt2")
+print("Model loaded without fail")

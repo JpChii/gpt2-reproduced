@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../makemore"
+		},
+		{
+			"path": "../micrograd"
+		},
+		{
+			"path": "../minbpe"
+		},
+		{
+			"path": "../nanogpt"
+		}
+	],
+	"settings": {}
+}
