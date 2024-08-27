@@ -56,12 +56,12 @@ class CasualSelfAttention(nn.Module):
         qkv = self.c_attn(x)
         # 2. Split this into query, key, value using torch.split(), shape of c_attn(B, n_embd, 3*n_embd), split along 2nd dim
         # to get q,k,v of shape (B, n_embd, n_embd)
-        q, k, v = qkv.split(self.n_embd, dim=2)
+        q, k, v = qkv.split(self.config.n_embd, dim=2)
         # 3. Multi Headed Attention
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
-        # 4. Scaled dor product, the reshaping above is for this
+        k = k.view(B, T, self.config.n_head, C // self.config.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
+        q = q.view(B, T, self.config.n_head, C // self.config.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
+        v = v.view(B, T, self.config.n_head, C // self.config.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
+        # 4. Scaled dot product, the reshaping above is for this
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True) # Flash attention
         # 5. ReTranspose(B, T nh, ns), contiguous for memory efficiency, return to original shape
         y = y.transpose(1, 2).contiguous().view(B, T, C)
@@ -134,7 +134,7 @@ class Block(nn.Module):
         # Attention mechanism - tokens interact with each other, can be assumed like reduce
         x = x + self.attn(self.ln_1(x))
         # Computation mechanism - each tokens are computed individually, can be assumed like map
-        x = x + self.MLP(self.ln_2(x))
+        x = x + self.mlp(self.ln_2(x))
         return x
 
 
@@ -157,6 +157,48 @@ class GPT2(nn.Module):
             ln_f = nn.LayerNorm(self.config.n_embd)
         ))
         self.lm_head = nn.Linear(self.config.n_embd, self.config.vocab_size, bias=False)
+
+    def forward(self, idx, targets=None):
+        """_summary_
+            1. Accepts, idx(input tokens in batches)
+            2. targets(optional) labels
+            3. Create positional embeddings, token embeddings, pass through block list, get logits from lm_head
+            4. Calculate loss if targets is not None
+            4. Return logits and loss
+        """
+
+        # Acccepts batch of input ids
+        B, T = idx.size()
+
+        assert T < self.config.block_size, f"Cannot process token length greater than block size: {self.config.block_size}"
+
+        # Create position embeddings
+        pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
+        pos_embd = self.transformer.wpe(pos) # shape (T, n_embd)
+        tok_embd = self.transformer.wte(idx) # shape (B, T. n_embd)
+
+        # Add positional information with word information
+        # the same position embeddings applies for each input in batch, broadcasting happens internally
+        x = tok_embd + pos_embd
+
+        # Forward the block of transformer
+        for block in self.transformer.h:
+            x = block(x)
+
+        # final layer normalization
+        x = self.transformer.ln_f(x)
+
+        # Get logits
+        logits = self.lm_head(x) # Shape (B, T, vocab_size)
+
+        # loss = None
+        # if targets is not None:
+        #     # cross entropy((B*T, vocab_size), targets)
+        #     # logits.view preservers final dimension and merges batch and tokens into a single dimension
+        #     loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+
+        return logits
+
 
     @classmethod
     def from_pretrained(cls, model_type):
@@ -188,10 +230,8 @@ class GPT2(nn.Module):
         config_args["vocab_size"] = 50257
         config_args["block_size"] = 1024
 
-        print(f"Config args: {config_args}")
         # Create a from-scratch initialized minGPT model
         config = GPTConfig(**config_args)
-        print(f"config: {config}")
         model = GPT2(config)
 
         # Get keys, # memory map sd_keys -> sd -> model the key copy is present inplace
@@ -230,6 +270,3 @@ class GPT2(nn.Module):
                     sd[k].copy_(sd_hf[k])
 
         return model
-    
-model = GPT2.from_pretrained("gpt2")
-print("Model loaded without fail")
