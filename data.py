@@ -41,5 +41,3 @@ def create_data(B, T):
     y = tokens[1:].view(B, T).to(device)
     print(f"Shape of x and y: {x.size()}, {y.size()}")
     return x, y
-
-create_data(8, 32)

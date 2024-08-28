@@ -49,11 +49,12 @@ while x.size(1) < max_length:
     # Calculate forward pass in no_grad
     with torch.no_grad():
         # 1. Forward pass
-        logits = model(x)
+        logits, loss = model(x)
 
         # For GPT LM head from huggingface
         if hugging_face:
-            logits = model(x).logits
+            ouput = model(x)
+            logits, loss = model.logits, model.loss
         # 2. Get last token logits
         last_token_logits = logits[:, -1, :]
         # 3. Get probabalities

@@ -191,13 +191,13 @@ class GPT2(nn.Module):
         # Get logits
         logits = self.lm_head(x) # Shape (B, T, vocab_size)
 
-        # loss = None
-        # if targets is not None:
-        #     # cross entropy((B*T, vocab_size), targets)
-        #     # logits.view preservers final dimension and merges batch and tokens into a single dimension
-        #     loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        loss = None
+        if targets is not None:
+            # cross entropy((B*T, vocab_size), (B*T))
+            # logits.view preservers final dimension and merges batch and tokens into a single dimension
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-        return logits
+        return logits, loss
 
 
     @classmethod
