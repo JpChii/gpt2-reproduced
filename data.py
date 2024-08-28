@@ -1,5 +1,7 @@
+import os
 import tiktoken
 import torch
+
 INPUT_FILE = "input.txt"
 
 # Setup device agnostic
@@ -41,3 +43,60 @@ def create_data(B, T):
     y = tokens[1:].view(B, T).to(device)
     print(f"Shape of x and y: {x.size()}, {y.size()}")
     return x, y
+
+# This is an improved version of create_data()
+class DataLoaderLite:
+    
+    def __init__(self, input_file: str, B: int, T: int):
+        
+        """
+        Initializes the DataLoaderLite class.
+
+        Args:
+            input_file (str): Path to the input file.
+            B (int): Batch size.
+            T (int): Number of tokens in each sequence.
+
+        Returns:
+            None
+        """
+
+        self.batch = B
+        self.token_size = T
+
+        # Load the data
+        assert os.path.exists(input_file), f"{input_file} does not exist"
+        with open(input_file, "r") as file:
+            data = file.read()
+
+        # Encode the data
+        self.encoder = tiktoken.get_encoding("gpt2")
+        self.tokens = self.encoder.encode(data)
+        self.tokens = torch.tensor(self.tokens)
+
+        # Calculate number of batches with B, T dimensions
+        print(f"Number of tokens: {len(self.tokens)}")
+        print(f"Total number of batches per epoch: {len(self.tokens) // (self.batch * self.token_size)}")
+
+        # Cursor for current position in the tokens
+        self.current_position = 0
+
+    def next_batch(self):
+        """
+        Returns next batch of data. 
+        
+        This function returns the next batch of data from the stored tokens. The batch size is determined by the attributes batch and tokens. 
+        The function returns a tuple of two tensors, x and y, of size (batch, tokens). These tensors are used as input and target for the language model.
+        The function also updates the current position in the tokens. When the current position reaches the end of the tokens, the position is reset to the beginning.
+        The tensors x and y are moved to the device specified in the global variable device.
+        """
+        buf = self.tokens[self.current_position: self.current_position + self.batch * self.token_size + 1]
+        x = buf[:-1].view(self.batch, self.token_size)
+        y = buf[1:].view(self.batch, self.token_size)
+        self.current_position += self.batch * self.token_size
+
+        # When we run out of tokens begin from beginning
+        if self.current_position >= len(self.tokens):
+            self.current_position = 0
+
+        return x, y

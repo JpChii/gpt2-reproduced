@@ -1,1 +1,3 @@
 commit.txt
+.DS_STORE
+__pycache__/
