@@ -7,13 +7,21 @@ from gpt2 import GPT2
 import tiktoken
 
 verbose = True
-device = "cuda" if torch.cuda.is_available() else "cpu"
+hugging_face = False
+device = "cpu" 
+if torch.cuda.is_available():
+    device = "cuda"    
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = "mps"
+
+print(f"Using device: {device}")
 num_sequences = 5
 max_length = 30
 
 # Load the model
-# model = GPT2.from_pretrained(model_type="gpt2")
-model = GPT2LMHeadModel.from_pretrained(pretrained_model_name_or_path="gpt2")
+model = GPT2.from_pretrained(model_type="gpt2")
+if hugging_face:
+    model = GPT2LMHeadModel.from_pretrained(pretrained_model_name_or_path="gpt2")
 # Move it to eval mode
 model.eval()
 # Move it to cuda, when gpu is available. This moves all the variables to gpu device
@@ -41,9 +49,11 @@ while x.size(1) < max_length:
     # Calculate forward pass in no_grad
     with torch.no_grad():
         # 1. Forward pass
-        # logits = model(x)
+        logits = model(x)
+
         # For GPT LM head from huggingface
-        logits = model(x)[0]
+        if hugging_face:
+            logits = model(x).logits
         # 2. Get last token logits
         last_token_logits = logits[:, -1, :]
         # 3. Get probabalities
