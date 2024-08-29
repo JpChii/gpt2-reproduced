@@ -40,6 +40,8 @@ class CasualSelfAttention(nn.Module):
         self.c_attn = nn.Linear(self.config.n_embd, 3 * self.config.n_embd)
         # Output projection
         self.c_proj = nn.Linear(self.config.n_embd, self.config.n_embd)
+        # Parameter for residual connection normalization
+        self.c_proj.NANO_GPT_INIT = 1
 
     def forward(self, x):
         """_summary_
@@ -96,6 +98,8 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(self.config.n_embd, 4*self.config.n_embd)
         self.gelu = nn.GELU(approximate="tanh")
         self.c_proj = nn.Linear(4*self.config.n_embd, self.config.n_embd)
+        # Parameter for residual connection normalization
+        self.c_proj.NANO_GPT_INIT = 1
 
     def forward(self, x):
         """
@@ -157,6 +161,31 @@ class GPT2(nn.Module):
             ln_f = nn.LayerNorm(self.config.n_embd)
         ))
         self.lm_head = nn.Linear(self.config.n_embd, self.config.vocab_size, bias=False)
+
+        # weight sharing
+        self.transformer.wte.weight = self.lm_head.weight
+
+        print("Weights intializations started")
+        self.apply(self._init_weights)
+        print("Weights intiailization complete")
+
+    def _init_weights(self, module):
+        std = 0.02
+        if isinstance(module, nn.Linear):
+            # Residual connection normalization
+            if hasattr(module, "NANO_GPT_INIT"):
+                # 2 because there are two residual connections
+                # Value from GPT2 paper
+                std *= 2 * (self.config.n_layer ** -0.5)
+
+            # initialize module.weight(tensor in place) to normal distribution with mean 0 and std 0.02.
+            # normal_ underscore at the end performs inplace intialization to the tensor
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+            
+            if isinstance(module, nn.Embedding):
+                torch.nn.init.normal_(module.weight, mean=0.0, std=std)
 
     def forward(self, idx, targets=None):
         """_summary_
