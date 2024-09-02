@@ -30,7 +30,7 @@ if SINGLE_BATCH_OVERFIT:
     """
     # Initialize model
     losses = []
-    model = GPT2(GPTConfig)
+    model = GPT2(GPTConfig).to(device)
     # Initialize optimizer
     optim = torch.optim.AdamW(
         params=model.parameters(), # Parameters for backprop
@@ -59,7 +59,7 @@ if ALL_DATA_OVERFIT:
 
     # Initialize model
     losses = []
-    model = GPT2(GPTConfig)
+    model = GPT2(GPTConfig).to(device)
     # Initialize optimizer
     optim = torch.optim.AdamW(
         params=model.parameters(), # Parameters for backprop

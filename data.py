@@ -96,7 +96,7 @@ class DataLoaderLite:
         self.current_position += self.batch * self.token_size
 
         # When we run out of tokens begin from beginning
-        if self.current_position >= len(self.tokens):
+        if self.current_position + (self.batch * self.token_size + 1) > len(self.tokens):
             self.current_position = 0
 
         return x, y
