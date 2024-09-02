@@ -1,3 +1,4 @@
+import time
 import torch
 from gpt2 import GPT2, GPTConfig
 from data import create_data, DataLoaderLite
@@ -5,6 +6,8 @@ from data import create_data, DataLoaderLite
 INIT_LOSS = False
 SINGLE_BATCH_OVERFIT = False
 ALL_DATA_OVERFIT = True
+B = 4
+T = 32
 
 # Setup device agnostic
 device = "cpu" 
@@ -19,7 +22,7 @@ if INIT_LOSS:
     # Random intialized model
     model = GPT2(GPTConfig)
     model.to(device)
-    x, y = create_data(B=4, T=32)
+    x, y = create_data(B=B, T=T)
     logits, loss = model(x, y)
 
 
@@ -37,7 +40,7 @@ if SINGLE_BATCH_OVERFIT:
         lr=3e-4, # This is good initial learning rate
     )
 
-    x, y = create_data(B=4, T=32)
+    x, y = create_data(B=B, T=T)
     # Initialize training loop
     for i in range(50):
         # Optimizer zero grad
@@ -55,7 +58,7 @@ if SINGLE_BATCH_OVERFIT:
 if ALL_DATA_OVERFIT:
     print("Running all data overfit training loop")
     # create dataloader
-    data_loader = DataLoaderLite(input_file="input.txt", B=4, T=32)
+    data_loader = DataLoaderLite(input_file="input.txt", B=B, T=T)
 
     # Initialize model
     losses = []
@@ -68,6 +71,7 @@ if ALL_DATA_OVERFIT:
 
     # Initialize training loop
     for i in range(50):
+        t0 = time.time()
         x, y = data_loader.next_batch()
         x, y = x.to(device), y.to(device)
         # Optimizer zero grad
@@ -78,6 +82,10 @@ if ALL_DATA_OVERFIT:
         loss.backward()
         # Update parameters
         optim.step()
-        print(f"Step {i}: {loss.item():.4f}")
+        # Wait until all instruction sent from cpu to gpu are completed
+        torch.cuda.synchronize()
+        t1 = time.time()
+        dt = (t1 - t0)*1000 # ms
+        print(f"Step {i}, loss: {loss.item():.4f}, dt: {dt:.2f}ms, tokens/sec: {B*T/t1-t0:.2f}")
         losses.append(loss.item())
     print(losses)
