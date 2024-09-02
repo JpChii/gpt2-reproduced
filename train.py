@@ -83,9 +83,10 @@ if ALL_DATA_OVERFIT:
         # Update parameters
         optim.step()
         # Wait until all instruction sent from cpu to gpu are completed
-        torch.cuda.synchronize()
+        if device == "cuda":
+            torch.cuda.synchronize()
         t1 = time.time()
         dt = (t1 - t0)*1000 # ms
-        print(f"Step {i}, loss: {loss.item():.4f}, dt: {dt:.2f}ms, tokens/sec: {B*T/t1-t0:.2f}")
+        print(f"Step {i}, loss: {loss.item():.4f}, dt: {dt:.2f}ms, tokens/sec: {(B*T)/(t1-t0):.2f}")
         losses.append(loss.item())
     print(losses)

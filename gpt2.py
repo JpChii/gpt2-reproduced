@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -42,6 +43,17 @@ class CasualSelfAttention(nn.Module):
         self.c_proj = nn.Linear(self.config.n_embd, self.config.n_embd)
         # Parameter for residual connection normalization
         self.c_proj.NANO_GPT_INIT = 1
+        # Not really bias more of a mask, but following OpenAI/HF naming convention
+        # Creates (1,1,1024,1024) masked tril to avoid seeing the future tokens
+        self.register_buffer(
+            "bias", # register a buffer
+            torch.tril(
+                torch.ones(
+                    self.config.block_size,
+                    self.config.block_size
+                    )
+                ).view(1, 1, self.config.block_size, self.config.block_size) # view as (1, 1, block_size, block_size)
+        )
 
     def forward(self, x):
         """_summary_
@@ -53,7 +65,8 @@ class CasualSelfAttention(nn.Module):
         # Calculate query, key, values for all heads in batch(using torch.view()) and move head forward to be the batch dim
         # nh is "number of heads", hs is "head size", and C(number of channels) = nh*ns or C/n_head = head_size
         # GPT-2(124M), n_heads=12, hs=64, so nh*ns=C=768 channels in the Transformer
-        
+        # T will match self.block_size in config
+
         # 1. querykeyvalue vector
         qkv = self.c_attn(x)
         # 2. Split this into query, key, value using torch.split(), shape of c_attn(B, n_embd, 3*n_embd), split along 2nd dim
@@ -64,7 +77,10 @@ class CasualSelfAttention(nn.Module):
         q = q.view(B, T, self.config.n_head, C // self.config.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
         v = v.view(B, T, self.config.n_head, C // self.config.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
         # 4. Scaled dot product, the reshaping above is for this
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True) # Flash attention
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1))) # (B, nh, T, ns) @ (B, nh, ns, T) -> (B, nh, T, T)
+        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float("-inf")) # (B, nh, T, T) -> (B, nh, T, T) -inf where not in block
+        att = F.softmax(att, dim=-1) # (B, nh, T, T) -> (B, nh, T, T)
+        y = att @ v # (B, nh, T, T) @ (B, nh, T, ns) -> (B, nh, T, ns)
         # 5. ReTranspose(B, T nh, ns), contiguous for memory efficiency, return to original shape
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         # 6. Output projection
