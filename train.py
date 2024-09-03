@@ -6,8 +6,8 @@ from data import create_data, DataLoaderLite
 INIT_LOSS = False
 SINGLE_BATCH_OVERFIT = False
 ALL_DATA_OVERFIT = True
-B = 4
-T = 32
+B = 16
+T = 1024
 
 # Setup device agnostic
 device = "cpu" 
@@ -56,6 +56,7 @@ if SINGLE_BATCH_OVERFIT:
     print(losses)
 
 if ALL_DATA_OVERFIT:
+    torch.set_float32_matmul_precision("high")
     print("Running all data overfit training loop")
     # create dataloader
     data_loader = DataLoaderLite(input_file="input.txt", B=B, T=T)
@@ -63,6 +64,7 @@ if ALL_DATA_OVERFIT:
     # Initialize model
     losses = []
     model = GPT2(GPTConfig).to(device)
+    model = torch.compile(model)
     # Initialize optimizer
     optim = torch.optim.AdamW(
         params=model.parameters(), # Parameters for backprop
@@ -77,7 +79,8 @@ if ALL_DATA_OVERFIT:
         # Optimizer zero grad
         optim.zero_grad(set_to_none=True)
         # Forward pass
-        logits, loss = model(x, y)
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            logits, loss = model(x, y)
         # Backward pass
         loss.backward()
         # Update parameters

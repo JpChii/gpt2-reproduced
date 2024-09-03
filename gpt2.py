@@ -77,10 +77,9 @@ class CasualSelfAttention(nn.Module):
         q = q.view(B, T, self.config.n_head, C // self.config.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
         v = v.view(B, T, self.config.n_head, C // self.config.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
         # 4. Scaled dot product, the reshaping above is for this
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1))) # (B, nh, T, ns) @ (B, nh, ns, T) -> (B, nh, T, T)
-        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float("-inf")) # (B, nh, T, T) -> (B, nh, T, T) -inf where not in block
-        att = F.softmax(att, dim=-1) # (B, nh, T, T) -> (B, nh, T, T)
-        y = att @ v # (B, nh, T, T) @ (B, nh, T, ns) -> (B, nh, T, ns)
+        y = F.scaled_dot_product_attention(
+            q, k, v, is_causal=True,
+        )
         # 5. ReTranspose(B, T nh, ns), contiguous for memory efficiency, return to original shape
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         # 6. Output projection
@@ -215,7 +214,7 @@ class GPT2(nn.Module):
         # Acccepts batch of input ids
         B, T = idx.size()
 
-        assert T < self.config.block_size, f"Cannot process token length greater than block size: {self.config.block_size}"
+        assert T <= self.config.block_size, f"Cannot process token length greater than block size: {self.config.block_size}"
 
         # Create position embeddings
         pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
