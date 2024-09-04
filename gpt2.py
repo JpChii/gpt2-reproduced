@@ -11,7 +11,7 @@ class GPTConfig:
     Config class to hold hyperparmeters of the model
     """
     block_size: int = 1024 # max sequence lenth
-    vocab_size: int = 50257 # Number of tokens: 256 byte tokens + 1 <|endoftext|> token + 50,000 BPE merges
+    vocab_size: int = 50304 # Number of tokens: 256 byte tokens + 1 <|endoftext|> token + 50,000 BPE merges, 50,304 for nice numbers
     n_layer: int = 12 # number of layers
     n_head: int = 12 # number of heads
     n_embd: int = 768 # embedding dim

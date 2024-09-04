@@ -8,6 +8,7 @@ SINGLE_BATCH_OVERFIT = False
 ALL_DATA_OVERFIT = True
 B = 16
 T = 1024
+max_steps = 50
 
 # Setup device agnostic
 device = "cpu" 
@@ -55,6 +56,7 @@ if SINGLE_BATCH_OVERFIT:
         losses.append(loss.item())
     print(losses)
 
+# Main code for speeding up
 if ALL_DATA_OVERFIT:
     torch.set_float32_matmul_precision("high")
     print("Running all data overfit training loop")
@@ -69,10 +71,12 @@ if ALL_DATA_OVERFIT:
     optim = torch.optim.AdamW(
         params=model.parameters(), # Parameters for backprop
         lr=3e-4, # This is good initial learning rate
+        betas=(0.9, 0.95), # Betas from GPT3 paper
+        eps=1e-8, # Eps from GPT3 paper, Default is also same
     )
 
     # Initialize training loop
-    for i in range(50):
+    for step in range(max_steps):
         t0 = time.time()
         x, y = data_loader.next_batch()
         x, y = x.to(device), y.to(device)
@@ -83,6 +87,8 @@ if ALL_DATA_OVERFIT:
             logits, loss = model(x, y)
         # Backward pass
         loss.backward()
+        # Clip gradient norm
+        norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         # Update parameters
         optim.step()
         # Wait until all instruction sent from cpu to gpu are completed
@@ -90,6 +96,6 @@ if ALL_DATA_OVERFIT:
             torch.cuda.synchronize()
         t1 = time.time()
         dt = (t1 - t0)*1000 # ms
-        print(f"Step {i}, loss: {loss.item():.4f}, dt: {dt:.2f}ms, tokens/sec: {(B*T)/(t1-t0):.2f}")
+        print(f"Step {step:4d} | loss: {loss.item():.6f} | norm: {norm:.4f} | dt: {dt:.2f}ms | tokens/sec: {(B*T)/(t1-t0):.2f}")
         losses.append(loss.item())
     print(losses)
