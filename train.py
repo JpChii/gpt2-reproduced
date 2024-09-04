@@ -1,4 +1,5 @@
 import time
+import math
 import torch
 from gpt2 import GPT2, GPTConfig
 from data import create_data, DataLoaderLite
@@ -9,6 +10,31 @@ ALL_DATA_OVERFIT = True
 B = 16
 T = 1024
 max_steps = 50
+max_lr = 10
+min_lr = max_lr * 0.1
+warmup_steps = 10
+
+def get_lr(it):
+    if it < warmup_steps:
+        # Starts from min_lr to max_lr during warmup
+        lr = max_lr * (it + 1) / warmup_steps
+        return lr
+
+    if it > max_steps:
+        # After max steps use min_lr
+        return min_lr
+    
+    # Betweem warmup_steps and max_steps use cosine annealing
+    # Decay ratio increases from 0 to 1
+    decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
+    print(f"Decay ratio: {decay_ratio}")
+    # math.cos(math.pi * decay_ratio) products value from -1 to 1 based on decay_ratio
+    # 1.0 is added to shift value from -1 to 1 to 1 to 2
+    # 0.5 is multiplied to shift value from 1 to 2 to 0 to 1, coeff starts from 1 and decreases until 0
+    # As decay ration increases coeff decreases, thus reducing learning rate
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+    lr = min_lr + (max_lr - min_lr) * coeff
+    return lr
 
 # Setup device agnostic
 device = "cpu" 
@@ -89,6 +115,12 @@ if ALL_DATA_OVERFIT:
         loss.backward()
         # Clip gradient norm
         norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        # determine and set learning rate for this iteration
+        lr = get_lr(step)
+        # There's a notion in PyTorch where multiple param_groups might exist, 
+        # hence we're looping through them and setting the lr in below fashion
+        for param_group in optim.param_groups:
+            param_group['lr'] = lr
         # Update parameters
         optim.step()
         # Wait until all instruction sent from cpu to gpu are completed
