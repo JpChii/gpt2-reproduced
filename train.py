@@ -10,7 +10,7 @@ ALL_DATA_OVERFIT = True
 B = 16
 T = 1024
 max_steps = 50
-max_lr = 10
+max_lr = 6e-4 # From GPT2 paper
 min_lr = max_lr * 0.1
 warmup_steps = 10
 
