@@ -52,6 +52,9 @@ class DataLoaderLite:
         """
         Initializes the DataLoaderLite class.
 
+        Data is sampled without replacement.
+        Data is loaded in chunks and a chunk wont be repeated with a step or epoch to avoid overfitting.
+
         Args:
             input_file (str): Path to the input file.
             B (int): Batch size.

@@ -15,6 +15,13 @@ min_lr = max_lr * 0.1
 warmup_steps = 10
 
 def get_lr(it):
+    """_summary_
+        * Linear warm up until 10 steps
+	    * cosine decay until a certain limit
+	    * and continue
+	    * max_lr from GPT3 paper for GPT-small is $6 * 10^{-4}$, our's is right now $3 * 10^{-4}$
+        * learning rate stops at the end of cosine decay as it matches with max_steps
+    """
     if it < warmup_steps:
         # Starts from min_lr to max_lr during warmup
         lr = max_lr * (it + 1) / warmup_steps
@@ -94,11 +101,16 @@ if ALL_DATA_OVERFIT:
     model = GPT2(GPTConfig).to(device)
     model = torch.compile(model)
     # Initialize optimizer
-    optim = torch.optim.AdamW(
-        params=model.parameters(), # Parameters for backprop
-        lr=3e-4, # This is good initial learning rate
-        betas=(0.9, 0.95), # Betas from GPT3 paper
-        eps=1e-8, # Eps from GPT3 paper, Default is also same
+    # optim = torch.optim.AdamW(
+    #     params=model.parameters(), # Parameters for backprop
+    #     lr=6e-4, # This is good initial learning rate
+    #     betas=(0.9, 0.95), # Betas from GPT3 paper
+    #     eps=1e-8, # Eps from GPT3 paper, Default is also same
+    # )
+    optim = model.configure_optimizers(
+        weight_decay=0.1,
+        learning_rate=6e-4,
+        device=device,
     )
 
     # Initialize training loop
@@ -128,6 +140,6 @@ if ALL_DATA_OVERFIT:
             torch.cuda.synchronize()
         t1 = time.time()
         dt = (t1 - t0)*1000 # ms
-        print(f"Step {step:4d} | loss: {loss.item():.6f} | norm: {norm:.4f} | dt: {dt:.2f}ms | tokens/sec: {(B*T)/(t1-t0):.2f}")
+        print(f"Step {step:4d} | loss: {loss.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | dt: {dt:.2f}ms | tokens/sec: {(B*T)/(t1-t0):.2f}")
         losses.append(loss.item())
     print(losses)

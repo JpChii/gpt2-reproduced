@@ -1,4 +1,5 @@
 import math
+import inspect
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -314,3 +315,46 @@ class GPT2(nn.Module):
                     sd[k].copy_(sd_hf[k])
 
         return model
+
+    def configure_optimizers(self, weigh_decay: float, learning_rate: float, device: str):
+        """_summary_
+
+        Creates and returns an optimizer with betas, lr and eps from GPT3 paper, plus implements 
+        a weight decay of 0.1 to tensors > 2d in model parameters that has gradient enabled and 0.0 
+        weight decay for model parameters < 2d
+
+        Args:
+            weigh_decay (float): _description_
+            learning_rate (float): _description_
+            device (str): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        # Start with all of the candidate parameters that require grad
+        param_dict = {param_name: param for param_name, param in self.named_parameters() if param.requires_grad}\
+        # Create optim groups. Parameters that require weight decay and doesn't require weight decay
+        # add weight decay if params dim >= 2
+        decay_params = [p for n, p in param_dict.items() if p.dim() >=2]
+        non_decay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {"params": decay_params, "weight_decay": weigh_decay},
+            {"params": non_decay_params, "weight_decay": 0.0},
+        ]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_non_decay_params = sum(p.numel() for p in non_decay_params)
+        print(f"Number of decayed parameter tensors: {len(decay_params)}, ({num_decay_params})")
+        print(f"Number of non-decayed parameter tensors: {len(non_decay_params)}, ({num_non_decay_params})")
+        # Use fused version if available, this uses optimizer to use kernel fusion to updated parameters if available
+        # This speeds up training
+        fused_available = "fused" in inspect.signature(torch.optim.SGD).parameters
+        use_fused = fused_available and device = "cuda"
+        optimizer = torch.optim.AdamW(
+            optim_groups, 
+            lr=learning_rate, 
+            betas=(0.9, 0.95), 
+            eps=1e-8, 
+            weight_decay=weigh_decay, 
+            fused=use_fused
+        )
+        return optimizer    
