@@ -13,6 +13,11 @@ max_steps = 50
 max_lr = 6e-4 # From GPT2 paper
 min_lr = max_lr * 0.1
 warmup_steps = 10
+total_batch_size = 524288  # 2**19 and divisible by B*T
+assert total_batch_size // (B*T) == 0, f"Total batch size {total_batch_size} must be divisible by B*T {B*T}"
+grad_accum_steps = total_batch_size // (B*T)
+print(f"Total batch size: {total_batch_size}")
+print(f"Grad accum steps:=> {total_batch_size} // {B} * {T} = {grad_accum_steps}")
 
 def get_lr(it):
     """_summary_
@@ -113,18 +118,25 @@ if ALL_DATA_OVERFIT:
         device=device,
     )
 
+
     # Initialize training loop
     for step in range(max_steps):
+        loss_accum = 0
         t0 = time.time()
         x, y = data_loader.next_batch()
         x, y = x.to(device), y.to(device)
         # Optimizer zero grad
         optim.zero_grad(set_to_none=True)
         # Forward pass
-        with torch.autocast(device_type=device, dtype=torch.bfloat16):
-            logits, loss = model(x, y)
-        # Backward pass
-        loss.backward()
+        for micro_step in total_batch_size:
+            with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                logits, loss = model(x, y)
+            loss = loss / grad_accum_steps
+            # detach to remove this step from gradient calculation
+            loss_accum += loss.detach()
+            # Backward pass
+            loss.backward()
+        
         # Clip gradient norm
         norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         # determine and set learning rate for this iteration
@@ -140,6 +152,6 @@ if ALL_DATA_OVERFIT:
             torch.cuda.synchronize()
         t1 = time.time()
         dt = (t1 - t0)*1000 # ms
-        print(f"Step {step:4d} | loss: {loss.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | dt: {dt:.2f}ms | tokens/sec: {(B*T)/(t1-t0):.2f}")
+        print(f"Step {step:4d} | loss: {loss_accum.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | dt: {dt:.2f}ms | tokens/sec: {(B*T)/(t1-t0):.2f}")
         losses.append(loss.item())
     print(losses)
