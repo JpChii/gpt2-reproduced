@@ -5,15 +5,16 @@ import torch
 INPUT_FILE = "input.txt"
 
 # Setup device agnostic
-device = "cpu" 
+device = "cpu"
 if torch.cuda.is_available():
-    device = "cuda"    
+    device = "cuda"
 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
 
 with open(INPUT_FILE, "r") as file:
     data = file.read()
 encoder = tiktoken.get_encoding("gpt2")
+
 
 def create_data(B, T):
     """_summary_
@@ -34,21 +35,20 @@ def create_data(B, T):
     Returns:
         tuple: x, y batch data
     """
-    num_tokens = B*T
+    num_tokens = B * T
     # Encode tokens, encoding 1000 with 3x compression ration of GPT2 tokenizer
     tokens = encoder.encode(data[:1000])
-    tokens = torch.tensor(tokens)[:B*T + 1]
+    tokens = torch.tensor(tokens)[: B * T + 1]
     print(f"Tokens size: {tokens.size()}")
     x = tokens[:-1].view(B, T).to(device)
     y = tokens[1:].view(B, T).to(device)
     print(f"Shape of x and y: {x.size()}, {y.size()}")
     return x, y
 
+
 # This is an improved version of create_data()
 class DataLoaderLite:
-    
     def __init__(self, input_file: str, B: int, T: int):
-        
         """
         Initializes the DataLoaderLite class.
 
@@ -79,27 +79,35 @@ class DataLoaderLite:
 
         # Calculate number of batches with B, T dimensions
         print(f"Number of tokens: {len(self.tokens)}")
-        print(f"Total number of batches per epoch: {len(self.tokens) // (self.batch * self.token_size)}")
+        print(
+            f"Total number of batches per epoch: {len(self.tokens) // (self.batch * self.token_size)}"
+        )
 
         # Cursor for current position in the tokens
         self.current_position = 0
 
     def next_batch(self):
         """
-        Returns next batch of data. 
-        
-        This function returns the next batch of data from the stored tokens. The batch size is determined by the attributes batch and tokens. 
+        Returns next batch of data.
+
+        This function returns the next batch of data from the stored tokens. The batch size is determined by the attributes batch and tokens.
         The function returns a tuple of two tensors, x and y, of size (batch, tokens). These tensors are used as input and target for the language model.
         The function also updates the current position in the tokens. When the current position reaches the end of the tokens, the position is reset to the beginning.
         The tensors x and y are moved to the device specified in the global variable device.
         """
-        buf = self.tokens[self.current_position: self.current_position + self.batch * self.token_size + 1]
+        buf = self.tokens[
+            self.current_position : self.current_position
+            + self.batch * self.token_size
+            + 1
+        ]
         x = buf[:-1].view(self.batch, self.token_size)
         y = buf[1:].view(self.batch, self.token_size)
         self.current_position += self.batch * self.token_size
 
         # When we run out of tokens begin from beginning
-        if self.current_position + (self.batch * self.token_size + 1) > len(self.tokens):
+        if self.current_position + (self.batch * self.token_size + 1) > len(
+            self.tokens
+        ):
             self.current_position = 0
 
         return x, y

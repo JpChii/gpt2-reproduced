@@ -8,9 +8,9 @@ import tiktoken
 
 verbose = True
 hugging_face = False
-device = "cpu" 
+device = "cpu"
 if torch.cuda.is_available():
-    device = "cuda"    
+    device = "cuda"
 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
 
@@ -32,10 +32,10 @@ prefix = "Hello, I'm a language model,"
 
 encoder = tiktoken.get_encoding("gpt2")
 tokens = encoder.encode(prefix)
-tokens = torch.tensor(tokens, dtype=torch.long) # (Number of tokens)
+tokens = torch.tensor(tokens, dtype=torch.long)  # (Number of tokens)
 tokens = tokens.repeat(
-    num_sequences, # Number of times to repeate the sequence. 5 
-    1, # dimension to repeate along
+    num_sequences,  # Number of times to repeate the sequence. 5
+    1,  # dimension to repeate along
 )
 print(f"Tokens shape after repeat: {tokens.size()}")
 x = tokens.to(device)
@@ -63,7 +63,7 @@ while x.size(1) < max_length:
         top_k_probs, top_k_indices = torch.topk(
             input=probs,
             k=50,
-            dim=-1, # Channel/embedding dimension
+            dim=-1,  # Channel/embedding dimension
         )
         # 5. Select a single token from top 50 probabalities
         ix = torch.multinomial(
@@ -79,8 +79,8 @@ while x.size(1) < max_length:
         # 7. concatenate this index to x
         x = torch.cat(
             tensors=(x, xcol),
-            dim=1, # Concatenate along token dimension
-            )
+            dim=1,  # Concatenate along token dimension
+        )
 
 print(f"Sequence shape after geneartion: {x.size()}")
 

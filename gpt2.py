@@ -6,16 +6,19 @@ from torch.nn import functional as F
 from dataclasses import dataclass
 from transformers import GPT2LMHeadModel
 
+
 @dataclass
 class GPTConfig:
     """
     Config class to hold hyperparmeters of the model
     """
-    block_size: int = 1024 # max sequence lenth
-    vocab_size: int = 50304 # Number of tokens: 256 byte tokens + 1 <|endoftext|> token + 50,000 BPE merges, 50,304 for nice numbers
-    n_layer: int = 12 # number of layers
-    n_head: int = 12 # number of heads
-    n_embd: int = 768 # embedding dim
+
+    block_size: int = 1024  # max sequence lenth
+    vocab_size: int = 50304  # Number of tokens: 256 byte tokens + 1 <|endoftext|> token + 50,000 BPE merges, 50,304 for nice numbers
+    n_layer: int = 12  # number of layers
+    n_head: int = 12  # number of heads
+    n_embd: int = 768  # embedding dim
+
 
 class CasualSelfAttention(nn.Module):
     """_summary_
@@ -33,6 +36,7 @@ class CasualSelfAttention(nn.Module):
     2. Linear layer to return to embed, embed dimension to be passed to MLP block
 
     """
+
     def __init__(self, config: GPTConfig):
         super().__init__()
         self.config = config
@@ -47,13 +51,10 @@ class CasualSelfAttention(nn.Module):
         # Not really bias more of a mask, but following OpenAI/HF naming convention
         # Creates (1,1,1024,1024) masked tril to avoid seeing the future tokens
         self.register_buffer(
-            "bias", # register a buffer
-            torch.tril(
-                torch.ones(
-                    self.config.block_size,
-                    self.config.block_size
-                    )
-                ).view(1, 1, self.config.block_size, self.config.block_size) # view as (1, 1, block_size, block_size)
+            "bias",  # register a buffer
+            torch.tril(torch.ones(self.config.block_size, self.config.block_size)).view(
+                1, 1, self.config.block_size, self.config.block_size
+            ),  # view as (1, 1, block_size, block_size)
         )
 
     def forward(self, x):
@@ -62,7 +63,7 @@ class CasualSelfAttention(nn.Module):
         Accepts input tensor, performs attention mechanism batchwise, returns projected output
         """
 
-        B, T, C = x.size() # batch size, sequence length, embedding dimension(n_embd)
+        B, T, C = x.size()  # batch size, sequence length, embedding dimension(n_embd)
         # Calculate query, key, values for all heads in batch(using torch.view()) and move head forward to be the batch dim
         # nh is "number of heads", hs is "head size", and C(number of channels) = nh*ns or C/n_head = head_size
         # GPT-2(124M), n_heads=12, hs=64, so nh*ns=C=768 channels in the Transformer
@@ -74,18 +75,28 @@ class CasualSelfAttention(nn.Module):
         # to get q,k,v of shape (B, n_embd, n_embd)
         q, k, v = qkv.split(self.config.n_embd, dim=2)
         # 3. Multi Headed Attention
-        k = k.view(B, T, self.config.n_head, C // self.config.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
-        q = q.view(B, T, self.config.n_head, C // self.config.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
-        v = v.view(B, T, self.config.n_head, C // self.config.n_head).transpose(1, 2) # (B, T, nh, hs) -> (B, nh, T, ns)
+        k = k.view(B, T, self.config.n_head, C // self.config.n_head).transpose(
+            1, 2
+        )  # (B, T, nh, hs) -> (B, nh, T, ns)
+        q = q.view(B, T, self.config.n_head, C // self.config.n_head).transpose(
+            1, 2
+        )  # (B, T, nh, hs) -> (B, nh, T, ns)
+        v = v.view(B, T, self.config.n_head, C // self.config.n_head).transpose(
+            1, 2
+        )  # (B, T, nh, hs) -> (B, nh, T, ns)
         # 4. Scaled dot product, the reshaping above is for this
         y = F.scaled_dot_product_attention(
-            q, k, v, is_causal=True,
+            q,
+            k,
+            v,
+            is_causal=True,
         )
         # 5. ReTranspose(B, T nh, ns), contiguous for memory efficiency, return to original shape
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         # 6. Output projection
         y = self.c_proj(y)
         return y
+
 
 class MLP(nn.Module):
     """_summary_
@@ -98,7 +109,7 @@ class MLP(nn.Module):
     We use GELU, due to it's smoothness(Send a small until a certain limit in x-axis for negative values and then sends zero)
     This smoothening reduces vanishing gradients
     To replicate GPT2 paper approximate implementation of GELU from pytorch is used. This is no longer needed
-    
+
     map in map-reduce
 
     Requires:
@@ -111,9 +122,9 @@ class MLP(nn.Module):
         self.config = config
 
         # Layers
-        self.c_fc = nn.Linear(self.config.n_embd, 4*self.config.n_embd)
+        self.c_fc = nn.Linear(self.config.n_embd, 4 * self.config.n_embd)
         self.gelu = nn.GELU(approximate="tanh")
-        self.c_proj = nn.Linear(4*self.config.n_embd, self.config.n_embd)
+        self.c_proj = nn.Linear(4 * self.config.n_embd, self.config.n_embd)
         # Parameter for residual connection normalization
         self.c_proj.NANO_GPT_INIT = 1
 
@@ -126,6 +137,7 @@ class MLP(nn.Module):
         x = self.c_proj(x)
         return x
 
+
 class Block(nn.Module):
     """_summary_
 
@@ -134,6 +146,7 @@ class Block(nn.Module):
     Requires:
     1. Two normalization layer for pre-normalization with attention and computation(mlp)
     """
+
     def __init__(self, config: GPTConfig):
         super().__init__()
         self.config = config
@@ -166,16 +179,20 @@ class GPT2(nn.Module):
 
         # Layers of the model to be called in forward function implementation
         # transformers naming convention from sd_hf
-        self.transformer = nn.ModuleDict(dict(
-            # wte naming convention from sd_hf, Token Embeddings
-            wte = nn.Embedding(self.config.vocab_size, self.config.n_embd),
-            # Position embeddings
-            wpe = nn.Embedding(self.config.block_size, self.config.n_embd),
-            # construct the module list h.0, h.1...,h.11 in st_hf
-            h = nn.ModuleList([Block(self.config) for _ in range(self.config.n_layer)]),
-            # final layer normalization
-            ln_f = nn.LayerNorm(self.config.n_embd)
-        ))
+        self.transformer = nn.ModuleDict(
+            dict(
+                # wte naming convention from sd_hf, Token Embeddings
+                wte=nn.Embedding(self.config.vocab_size, self.config.n_embd),
+                # Position embeddings
+                wpe=nn.Embedding(self.config.block_size, self.config.n_embd),
+                # construct the module list h.0, h.1...,h.11 in st_hf
+                h=nn.ModuleList(
+                    [Block(self.config) for _ in range(self.config.n_layer)]
+                ),
+                # final layer normalization
+                ln_f=nn.LayerNorm(self.config.n_embd),
+            )
+        )
         self.lm_head = nn.Linear(self.config.n_embd, self.config.vocab_size, bias=False)
 
         # weight sharing
@@ -192,35 +209,37 @@ class GPT2(nn.Module):
             if hasattr(module, "NANO_GPT_INIT"):
                 # 2 because there are two residual connections
                 # Value from GPT2 paper
-                std *= 2 * (self.config.n_layer ** -0.5)
+                std *= 2 * (self.config.n_layer**-0.5)
 
             # initialize module.weight(tensor in place) to normal distribution with mean 0 and std 0.02.
             # normal_ underscore at the end performs inplace intialization to the tensor
             torch.nn.init.normal_(module.weight, mean=0.0, std=std)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
-            
+
             if isinstance(module, nn.Embedding):
                 torch.nn.init.normal_(module.weight, mean=0.0, std=std)
 
     def forward(self, idx, targets=None):
         """_summary_
-            1. Accepts, idx(input tokens in batches)
-            2. targets(optional) labels
-            3. Create positional embeddings, token embeddings, pass through block list, get logits from lm_head
-            4. Calculate loss if targets is not None
-            4. Return logits and loss
+        1. Accepts, idx(input tokens in batches)
+        2. targets(optional) labels
+        3. Create positional embeddings, token embeddings, pass through block list, get logits from lm_head
+        4. Calculate loss if targets is not None
+        4. Return logits and loss
         """
 
         # Acccepts batch of input ids
         B, T = idx.size()
 
-        assert T <= self.config.block_size, f"Cannot process token length greater than block size: {self.config.block_size}"
+        assert (
+            T <= self.config.block_size
+        ), f"Cannot process token length greater than block size: {self.config.block_size}"
 
         # Create position embeddings
         pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
-        pos_embd = self.transformer.wpe(pos) # shape (T, n_embd)
-        tok_embd = self.transformer.wte(idx) # shape (B, T. n_embd)
+        pos_embd = self.transformer.wpe(pos)  # shape (T, n_embd)
+        tok_embd = self.transformer.wte(idx)  # shape (B, T. n_embd)
 
         # Add positional information with word information
         # the same position embeddings applies for each input in batch, broadcasting happens internally
@@ -234,7 +253,7 @@ class GPT2(nn.Module):
         x = self.transformer.ln_f(x)
 
         # Get logits
-        logits = self.lm_head(x) # Shape (B, T, vocab_size)
+        logits = self.lm_head(x)  # Shape (B, T, vocab_size)
 
         loss = None
         if targets is not None:
@@ -243,7 +262,6 @@ class GPT2(nn.Module):
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
         return logits, loss
-
 
     @classmethod
     def from_pretrained(cls, model_type):
@@ -265,12 +283,12 @@ class GPT2(nn.Module):
 
         # Define layer parameters for gpt series models and select
         config_args = {
-            "gpt2":         dict(n_layer=12, n_head=12, n_embd=768), # 124M params
-            "gpt2-medium":  dict(n_layer=24, n_head=16, n_embd=1024), # 350M params
-            'gpt2-large':   dict(n_layer=36, n_head=20, n_embd=1280), # 774M params
-            'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600), # 1558M params        
+            "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
+            "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
+            "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
+            "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M params
         }[model_type]
-        
+
         # Below params are same for all GPT2 variants
         config_args["vocab_size"] = 50257
         config_args["block_size"] = 1024
@@ -295,9 +313,16 @@ class GPT2(nn.Module):
         sd_hf_keys = [k for k in sd_hf_keys if not k.endswith(".attn.masked_bias")]
         # Four keys (attn.c_attn - Attnetion linear layers), (attn.c_proj - output linear projection of attention layer)
         # (mlp.c_fc, mlp.c_proj - MLP computation)
-        transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
+        transposed = [
+            "attn.c_attn.weight",
+            "attn.c_proj.weight",
+            "mlp.c_fc.weight",
+            "mlp.c_proj.weight",
+        ]
 
-        assert len(sd_hf_keys) == len(sd_keys), f"Mismatched kyes: {len(sd_hf_keys)} != {len(sd_keys)}"
+        assert len(sd_hf_keys) == len(
+            sd_keys
+        ), f"Mismatched kyes: {len(sd_hf_keys)} != {len(sd_keys)}"
 
         for k in sd_hf_keys:
             if any(k.endswith(w) for w in transposed):
@@ -310,21 +335,25 @@ class GPT2(nn.Module):
                 # Match shape and vanilla copy over the other params
                 assert k in sd_hf_keys, f"{k} not in sd_hf_keys"
                 assert k in sd_keys, f"{k} not in sd"
-                assert sd_hf[k].shape == sd[k].shape, f"{k}_hf shape: {sd_hf[k].shape}, {k}_scratch shape: {sd[k].shape}"
+                assert (
+                    sd_hf[k].shape == sd[k].shape
+                ), f"{k}_hf shape: {sd_hf[k].shape}, {k}_scratch shape: {sd[k].shape}"
                 with torch.no_grad():
                     sd[k].copy_(sd_hf[k])
 
         return model
 
-    def configure_optimizers(self, weigh_decay: float, learning_rate: float, device: str):
+    def configure_optimizers(
+        self, weight_decay: float, learning_rate: float, device: str
+    ):
         """_summary_
 
-        Creates and returns an optimizer with betas, lr and eps from GPT3 paper, plus implements 
-        a weight decay of 0.1 to tensors > 2d in model parameters that has gradient enabled and 0.0 
+        Creates and returns an optimizer with betas, lr and eps from GPT3 paper, plus implements
+        a weight decay of 0.1 to tensors > 2d in model parameters that has gradient enabled and 0.0
         weight decay for model parameters < 2d
 
         Args:
-            weigh_decay (float): _description_
+            weight_decay (float): _description_
             learning_rate (float): _description_
             device (str): _description_
 
@@ -332,29 +361,37 @@ class GPT2(nn.Module):
             _type_: _description_
         """
         # Start with all of the candidate parameters that require grad
-        param_dict = {param_name: param for param_name, param in self.named_parameters() if param.requires_grad}\
-        # Create optim groups. Parameters that require weight decay and doesn't require weight decay
+        param_dict = {
+            param_name: param
+            for param_name, param in self.named_parameters()
+            if param.requires_grad
+        }  # Create optim groups. Parameters that require weight decay and doesn't require weight decay
         # add weight decay if params dim >= 2
-        decay_params = [p for n, p in param_dict.items() if p.dim() >=2]
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
         non_decay_params = [p for n, p in param_dict.items() if p.dim() < 2]
         optim_groups = [
-            {"params": decay_params, "weight_decay": weigh_decay},
+            {"params": decay_params, "weight_decay": weight_decay},
             {"params": non_decay_params, "weight_decay": 0.0},
         ]
         num_decay_params = sum(p.numel() for p in decay_params)
         num_non_decay_params = sum(p.numel() for p in non_decay_params)
-        print(f"Number of decayed parameter tensors: {len(decay_params)}, ({num_decay_params})")
-        print(f"Number of non-decayed parameter tensors: {len(non_decay_params)}, ({num_non_decay_params})")
+        print(
+            f"Number of decayed parameter tensors: {len(decay_params)}, ({num_decay_params})"
+        )
+        print(
+            f"Number of non-decayed parameter tensors: {len(non_decay_params)}, ({num_non_decay_params})"
+        )
         # Use fused version if available, this uses optimizer to use kernel fusion to updated parameters if available
         # This speeds up training
-        fused_available = "fused" in inspect.signature(torch.optim.SGD).parameters
-        use_fused = fused_available and device = "cuda"
+        fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
+        use_fused = fused_available and device == "cuda"
+        print(f"Using fused AdamW: {use_fused}")
         optimizer = torch.optim.AdamW(
-            optim_groups, 
-            lr=learning_rate, 
-            betas=(0.9, 0.95), 
-            eps=1e-8, 
-            weight_decay=weigh_decay, 
-            fused=use_fused
+            optim_groups,
+            lr=learning_rate,
+            betas=(0.9, 0.95),
+            eps=1e-8,
+            weight_decay=weight_decay,
+            fused=use_fused,
         )
-        return optimizer    
+        return optimizer
