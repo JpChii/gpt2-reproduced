@@ -1,3 +1,5 @@
+import math
+
 max_steps = 50
 max_lr = 6e-4  # From GPT2 paper
 min_lr = max_lr * 0.1
