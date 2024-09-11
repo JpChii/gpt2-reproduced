@@ -48,7 +48,7 @@ def create_data(B, T):
 
 # This is an improved version of create_data()
 class DataLoaderLite:
-    def __init__(self, input_file: str, B: int, T: int):
+    def __init__(self, input_file: str, B: int, T: int, num_processes: int, process_rank: int):
         """
         Initializes the DataLoaderLite class.
 
@@ -59,6 +59,8 @@ class DataLoaderLite:
             input_file (str): Path to the input file.
             B (int): Batch size.
             T (int): Number of tokens in each sequence.
+            num_processes (int): Number of GPUs.
+            process_rank (int): ID of the current GPU. This will be used to offset the data samples.
 
         Returns:
             None
@@ -66,6 +68,8 @@ class DataLoaderLite:
 
         self.batch = B
         self.token_size = T
+        self.process_rank = process_rank
+        self.num_processes = num_processes
 
         # Load the data
         assert os.path.exists(input_file), f"{input_file} does not exist"
@@ -84,7 +88,8 @@ class DataLoaderLite:
         )
 
         # Cursor for current position in the tokens
-        self.current_position = 0
+        # start at 0 for rank 0, B*T*1 for rank 1, B*T*2 for rank 2, etc
+        self.current_position = self.batch * self.token_size * self.process_rank
 
     def next_batch(self):
         """
@@ -102,10 +107,10 @@ class DataLoaderLite:
         ]
         x = buf[:-1].view(self.batch, self.token_size)
         y = buf[1:].view(self.batch, self.token_size)
-        self.current_position += self.batch * self.token_size
+        self.current_position += self.batch * self.token_size * self.process_rank
 
         # When we run out of tokens begin from beginning
-        if self.current_position + (self.batch * self.token_size + 1) > len(
+        if self.current_position + (self.batch * self.token_size + self.process_rank + 1) > len(
             self.tokens
         ):
             self.current_position = 0

@@ -1,11 +1,15 @@
 import os
 import time
 import torch
-from torch.distributed import init_process_group
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group, destroy_process_group
 from gpt2 import GPT2, GPTConfig
 from data import DataLoaderLite
 from train import get_lr
 
+# DDP Launch 2 GPUs
+# torchrun --standalone --nproc_per_node=2 train_ddp.py
 
 # Setup DDP
 # torchrun command sets the required env variables - RANK, LOCAL_RANK, WORLD_SIZE
@@ -71,6 +75,14 @@ torch.set_float32_matmul_precision("high")
 losses = []
 model = GPT2(GPTConfig).to(device)
 model = torch.compile(model)
+
+# DDP does below:
+# Forward pass remains the same across processes.
+# Average gradients across processes for all model parameters and synchronize the average to all processes
+# During backward pass, DDP sends communication between processes(probably from master process) as soon as the gradients are calculated for parameters creating an overlap before average of gradients and synchronize the averaged gradients across processes.
+if ddp:
+    model = DDP(model, device_ids=[ddp_local_rank])
+raw_model = model.module if ddp else model
 # Initialize optimizer
 # optim = torch.optim.AdamW(
 #     params=model.parameters(), # Parameters for backprop
@@ -78,7 +90,7 @@ model = torch.compile(model)
 #     betas=(0.9, 0.95), # Betas from GPT3 paper
 #     eps=1e-8, # Eps from GPT3 paper, Default is also same
 # )
-optim = model.configure_optimizers(
+optim = raw_model.configure_optimizers(
     weight_decay=0.1,
     learning_rate=6e-4,
     device=device,
@@ -95,13 +107,24 @@ for step in range(max_steps):
     # Forward pass
     for micro_step in range(grad_accum_steps):
         with torch.autocast(device_type=device, dtype=torch.bfloat16):
-            logits, loss = model(x, y)
+            logits, loss = raw_model(x, y)
+        # Scale loss to account for gradient accumulation
+        # because gradient just add on each successive backward().
+        # Generally loss has an objective SUM or MEAN. cross_entropy_loss objective/reduction is MEAN.
+        # To calculate mean of loss we do the below step
         loss = loss / grad_accum_steps
         # detach to remove this step from gradient calculation
         loss_accum += loss.detach()
+        # Set grad sync to False until last microstep
+        if ddp:
+            # This makes sure grads are not synchronized until last microstep
+            model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
         # Backward pass
         loss.backward()
 
+    # Average DDP Loss
+    if ddp:
+        dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
     # Clip gradient norm
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     # determine and set learning rate for this iteration
@@ -117,10 +140,13 @@ for step in range(max_steps):
         torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1 - t0) * 1000  # ms
-    tokens_processed = B * T * grad_accum_steps
+    tokens_processed = B * T * grad_accum_steps * ddp_world_size
     tokens_per_sec = tokens_processed / (t1 - t0)
     if master_process:
         print(
             f"Step {step:4d} | loss: {loss_accum.item():.6f} | lr: {lr:.4e} | norm: {norm:.4f} | dt: {dt:.2f}ms | tokens/sec: {tokens_per_sec:.2f}"
         )
     losses.append(loss.item())
+
+    if ddp:
+        destroy_process_group()

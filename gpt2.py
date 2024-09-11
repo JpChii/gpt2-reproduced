@@ -3,6 +3,7 @@ import inspect
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from torch.distributed.optim import ZeroRedundancyOptimizer
 from dataclasses import dataclass
 from transformers import GPT2LMHeadModel
 
@@ -344,7 +345,7 @@ class GPT2(nn.Module):
         return model
 
     def configure_optimizers(
-        self, weight_decay: float, learning_rate: float, device: str
+        self, weight_decay: float, learning_rate: float, device: str, use_zero; bool = False
     ):
         """_summary_
 
@@ -353,9 +354,10 @@ class GPT2(nn.Module):
         weight decay for model parameters < 2d
 
         Args:
-            weight_decay (float): _description_
-            learning_rate (float): _description_
-            device (str): _description_
+            weight_decay (float): weight decay parameter
+            learning_rate (float): learning rate to be used
+            device (str): device in use
+            use_zero(bool): If True use ZeroRedundancyOptimizer. https://pytorch.org/tutorials/recipes/zero_redundancy_optimizer.html
 
         Returns:
             _type_: _description_
@@ -394,4 +396,13 @@ class GPT2(nn.Module):
             weight_decay=weight_decay,
             fused=use_fused,
         )
+        if use_zero:
+            optimizer = ZeroRedundancyOptimizer(
+                    optim_groups,
+                    lr=learning_rate,
+                    betas=(0.9, 0.95),
+                    eps=1e-8,
+                    weight_decay=weight_decay,
+                    fused=use_fused,                
+                )
         return optimizer
