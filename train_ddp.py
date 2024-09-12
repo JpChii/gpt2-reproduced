@@ -2,6 +2,7 @@ import os
 import time
 import torch
 import torch.distributed as dist
+dist.init_process_group(backend="nccl")
 from torch.nn.parallel import DistributedDataParallel as DDP
 from gpt2 import GPT2, GPTConfig
 from data import DataLoaderLite
@@ -14,11 +15,10 @@ from utils import get_lr
 # torchrun command sets the required env variables - RANK, LOCAL_RANK, WORLD_SIZE
 # Check if the run is ddp
 ddp = int(os.environ.get("RANK", -1)) != -1
+print(f"Is running on DDP: {ddp}")
 if ddp:
     # DDP requires cuda, we set the device appropriatley according to rank using cuda
     assert torch.cuda.is_available(), "DDP requires cuda"
-    # Initialize torch.distributed with nccl
-    dist.init_process_group(backend="nccl")
     # Get env variables from ddp
     ddp_rank = int(os.environ["RANK"])
     ddp_local_rank = int(os.environ["LOCAL_RANK"])
