@@ -81,11 +81,12 @@ class DataLoaderLite:
         self.tokens = self.encoder.encode(data)
         self.tokens = torch.tensor(self.tokens)
 
-        # Calculate number of batches with B, T dimensions
-        print(f"Number of tokens: {len(self.tokens)}")
-        print(
-            f"Total number of batches per epoch: {len(self.tokens) // (self.batch * self.token_size)}"
-        )
+        if self.process_rank == 0:
+            # Calculate number of batches with B, T dimensions
+            print(f"Number of tokens: {len(self.tokens)}")
+            print(
+                f"Total number of batches per epoch: {len(self.tokens) // (self.batch * self.token_size)}"
+            )
 
         # Cursor for current position in the tokens
         # start at 0 for rank 0, B*T*1 for rank 1, B*T*2 for rank 2, etc

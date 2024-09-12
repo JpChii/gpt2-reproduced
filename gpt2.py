@@ -173,10 +173,11 @@ class Block(nn.Module):
 
 
 class GPT2(nn.Module):
-    def __init__(self, config: GPTConfig):
+    def __init__(self, config: GPTConfig, master_process: bool = False):
         super().__init__()
         # config to access parameters
         self.config = config
+        self.master_process = master_process
 
         # Layers of the model to be called in forward function implementation
         # transformers naming convention from sd_hf
@@ -199,9 +200,11 @@ class GPT2(nn.Module):
         # weight sharing
         self.transformer.wte.weight = self.lm_head.weight
 
-        print("Weights intializations started")
+        if self.master_process:
+            print("Weights intializations started")
         self.apply(self._init_weights)
-        print("Weights intiailization complete")
+        if self.master_process:
+            print("Weights intiailization complete")
 
     def _init_weights(self, module):
         std = 0.02
@@ -377,17 +380,19 @@ class GPT2(nn.Module):
         ]
         num_decay_params = sum(p.numel() for p in decay_params)
         num_non_decay_params = sum(p.numel() for p in non_decay_params)
-        print(
-            f"Number of decayed parameter tensors: {len(decay_params)}, ({num_decay_params})"
-        )
-        print(
-            f"Number of non-decayed parameter tensors: {len(non_decay_params)}, ({num_non_decay_params})"
-        )
+        if self.master_process:
+            print(
+                f"Number of decayed parameter tensors: {len(decay_params)}, ({num_decay_params})"
+            )
+            print(
+                f"Number of non-decayed parameter tensors: {len(non_decay_params)}, ({num_non_decay_params})"
+            )
         # Use fused version if available, this uses optimizer to use kernel fusion to updated parameters if available
         # This speeds up training
         fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
         use_fused = fused_available and device == "cuda"
-        print(f"Using fused AdamW: {use_fused}")
+        if self.master_process:
+            print(f"Using fused AdamW: {use_fused}")
         optimizer = torch.optim.AdamW(
             optim_groups,
             lr=learning_rate,

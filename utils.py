@@ -25,7 +25,6 @@ def get_lr(it):
     # Betweem warmup_steps and max_steps use cosine annealing
     # Decay ratio increases from 0 to 1
     decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
-    print(f"Decay ratio: {decay_ratio}")
     # math.cos(math.pi * decay_ratio) products value from -1 to 1 based on decay_ratio
     # 1.0 is added to shift value from -1 to 1 to 1 to 2
     # 0.5 is multiplied to shift value from 1 to 2 to 0 to 1, coeff starts from 1 and decreases until 0

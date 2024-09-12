@@ -3,10 +3,9 @@ import time
 import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.distributed import init_process_group, destroy_process_group
 from gpt2 import GPT2, GPTConfig
 from data import DataLoaderLite
-from train import get_lr
+from utils import get_lr
 
 # DDP Launch 2 GPUs
 # torchrun --standalone --nproc_per_node=2 train_ddp.py
@@ -19,13 +18,13 @@ if ddp:
     # DDP requires cuda, we set the device appropriatley according to rank using cuda
     assert torch.cuda.is_available(), "DDP requires cuda"
     # Initialize torch.distributed with nccl
-    init_process_group(backend="nccl")
+    dist.init_process_group(backend="nccl")
     # Get env variables from ddp
     ddp_rank = int(os.environ["RANK"])
     ddp_local_rank = int(os.environ["LOCAL_RANK"])
     ddp_world_size = int(os.environ["WORLD_SIZE"])
     # Cuda device/GPU is assigned based in rank
-    device = f"cuda:{ddp_rank}"
+    device = f"cuda:{ddp_local_rank}"
     # This is set to avoid collision within GPUs
     torch.cuda.set_device(device)
     master_process = ddp_rank == 0  # this process will do logging, checkpoint etc.
@@ -55,10 +54,8 @@ device_type = "cuda" if device.startswith("cuda") else "cpu"
 B = 16
 T = 1024
 max_steps = 50
-max_lr = 6e-4  # From GPT2 paper
-min_lr = max_lr * 0.1
-warmup_steps = 10
 total_batch_size = 524288  # 2**19 and divisible by B*T
+
 assert (
     total_batch_size % (B * T * ddp_world_size) == 0
 ), f"Total batch size {total_batch_size} must be divisible by B*T {B*T}"
@@ -69,7 +66,7 @@ if master_process:
     print(f"Number of tokens processing in parallel: {B*T*ddp_world_size}")
 
 # create dataloader, comes above float32 matmul to avoid loading data in GPU
-data_loader = DataLoaderLite(input_file="input.txt", B=B, T=T)
+data_loader = DataLoaderLite(input_file="input.txt", B=B, T=T, num_processes=ddp_world_size, process_rank=ddp_rank)
 
 # use TF32 tensor core, speeding up matmul
 torch.set_float32_matmul_precision("high")
@@ -111,8 +108,15 @@ for step in range(max_steps):
     optim.zero_grad(set_to_none=True)
     # Forward pass
     for micro_step in range(grad_accum_steps):
+
+        # Set grad sync to False until last microstep
+        if ddp:
+            # This makes sure grads are not synchronized until last microstep
+            model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
+
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-            logits, loss = raw_model(x, y)
+            logits, loss = model(x, y)
+
         # Scale loss to account for gradient accumulation
         # because gradient just add on each successive backward().
         # Generally loss has an objective SUM or MEAN. cross_entropy_loss objective/reduction is MEAN.
@@ -120,10 +124,6 @@ for step in range(max_steps):
         loss = loss / grad_accum_steps
         # detach to remove this step from gradient calculation
         loss_accum += loss.detach()
-        # Set grad sync to False until last microstep
-        if ddp:
-            # This makes sure grads are not synchronized until last microstep
-            model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
         # Backward pass
         loss.backward()
 
@@ -154,4 +154,4 @@ for step in range(max_steps):
     losses.append(loss.item())
 
     if ddp:
-        destroy_process_group()
+        dist.destroy_process_group()
