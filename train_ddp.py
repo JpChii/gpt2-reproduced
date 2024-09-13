@@ -19,7 +19,6 @@ if ddp:
     # DDP requires cuda, we set the device appropriatley according to rank using cuda
     assert torch.cuda.is_available(), "DDP requires cuda"
     dist.init_process_group(backend="nccl")
-    print(f"Dist initialization: {dist.GroupMember.WORLD != None}")
     # Get env variables from ddp
     ddp_rank = int(os.environ["RANK"])
     ddp_local_rank = int(os.environ["LOCAL_RANK"])
@@ -75,7 +74,6 @@ torch.set_float32_matmul_precision("high")
 # Initialize model
 losses = []
 model = GPT2(GPTConfig).to(device)
-model = torch.compile(model)
 # DDP does below:
 # Forward pass remains the same across processes.
 # Average gradients across processes for all model parameters and synchronize the average to all processes
@@ -83,6 +81,9 @@ model = torch.compile(model)
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model
+# called DDP(model) before compile to allow torchdynamo to graph-break optimizations based on bucket sizes
+# https://pytorch.org/docs/stable/notes/ddp.html
+model = torch.compile(model)
 
 
 # Initialize optimizer
@@ -127,8 +128,6 @@ for step in range(max_steps):
         # Backward pass
         loss.backward()
 
-    print(f"Default group: {dist.is_initialized()}")
-    print(f"World: {dist.GroupMember.WORLD is not None}")
     # Average DDP Loss
     if ddp:
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
