@@ -92,7 +92,7 @@ class DataLoaderLite:
         # start at 0 for rank 0, B*T*1 for rank 1, B*T*2 for rank 2, etc
         self.current_position = self.batch * self.token_size * self.process_rank
 
-    def next_batch(self):
+    def next_batch(self, micro_step, step):
         """
         Returns next batch of data.
 
@@ -108,12 +108,18 @@ class DataLoaderLite:
         ]
         x = buf[:-1].view(self.batch, self.token_size)
         y = buf[1:].view(self.batch, self.token_size)
-        self.current_position += self.batch * self.token_size * self.process_rank
+        self.current_position += self.batch * self.token_size * self.num_processes
 
         # When we run out of tokens begin from beginning
-        if self.current_position + (self.batch * self.token_size + self.process_rank + 1) > len(
+        if self.current_position + (self.batch * self.token_size + self.num_processes + 1) > len(
             self.tokens
         ):
-            self.current_position = 0
+            self.current_position = self.batch * self.token_size * self.process_rank
+
+        print("-"*30 + "start gpu" + self.process_rank + "-"*30 + "step" + step + "micro_step" + micro_step)
+        print(f"Initial index: {self.current_position}")
+        print(f"Final index: {self.current_position + self.batch * self.token_size + 1}")
+        print(f"Final current position: {self.current_position}")
+        print("-"*30 + "end gpu" + self.process_rank + "-"*30  + "step" + step + "micro_step" + micro_step)
 
         return x, y

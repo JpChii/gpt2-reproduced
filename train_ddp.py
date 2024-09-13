@@ -103,8 +103,6 @@ optim = raw_model.configure_optimizers(
 for step in range(max_steps):
     loss_accum = 0
     t0 = time.time()
-    x, y = data_loader.next_batch()
-    x, y = x.to(device), y.to(device)
     # Optimizer zero grad
     optim.zero_grad(set_to_none=True)
     # Forward pass
@@ -114,7 +112,8 @@ for step in range(max_steps):
         if ddp:
             # This makes sure grads are not synchronized until last microstep
             model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
-
+        x, y = data_loader.next_batch(micro_step=micro_step,step=step)
+        x, y = x.to(device), y.to(device)
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
             logits, loss = raw_model(x, y)
 
