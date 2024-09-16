@@ -1,6 +1,7 @@
 import os
 import tiktoken
 import torch
+import numpy as np
 
 INPUT_FILE = "input.txt"
 
@@ -48,7 +49,7 @@ def create_data(B, T):
 
 # This is an improved version of create_data()
 class DataLoaderLite:
-    def __init__(self, input_file: str, B: int, T: int, num_processes: int, process_rank: int):
+    def __init__(self, input_file: str, B: int, T: int, num_processes: int, process_rank: int, split: str):
         """
         Initializes the DataLoaderLite class.
 
@@ -61,6 +62,7 @@ class DataLoaderLite:
             T (int): Number of tokens in each sequence.
             num_processes (int): Number of GPUs.
             process_rank (int): ID of the current GPU. This will be used to offset the data samples.
+            split (str): Either "train" or "val".
 
         Returns:
             None
@@ -70,6 +72,7 @@ class DataLoaderLite:
         self.token_size = T
         self.process_rank = process_rank
         self.num_processes = num_processes
+        assert split in ["train", "val"]
 
         # Load the data
         assert os.path.exists(input_file), f"{input_file} does not exist"
@@ -88,9 +91,30 @@ class DataLoaderLite:
                 f"Total number of batches per epoch: {len(self.tokens) // (self.batch * self.token_size)}"
             )
 
+        # Load shards
+        data_roor_dir = "edu_fineweb10B"
+        data_shards = os.listdir(data_roor_dir)
+        shards_split = [s for s in data_shards if split in s] # filter shards based on split
+        shards = [os.path.join(data_roor_dir, s) for s in shards_split]
+        self.shards = shards
+        assert len(self.shards) > 0, "No shards found"
+        self.reset()
+
+    @classmethod
+    def load_tokens(self, filename):
+        # Load numpy tokens file
+        npt = np.load(filename)
+        npt = np.astype(npt, np.int32)
+        ptt = torch.from_numpy(npt, dtype=torch.long)
+        return ptt
+
+    def reset(self):
+        self.current_shard = 0
+        self.tokens = self.load_tokens(self.shards[self.current_shard])
         # Cursor for current position in the tokens
         # start at 0 for rank 0, B*T*1 for rank 1, B*T*2 for rank 2, etc
         self.current_position = self.batch * self.token_size * self.process_rank
+
 
     def next_batch(self):
         """
@@ -105,15 +129,21 @@ class DataLoaderLite:
             self.current_position : self.current_position
             + self.batch * self.token_size
             + 1
-        ]
+        ] # sample slicing [0, 0+16*1024+1] = [0, 16385]. A single step of 16*1024 requires 16385 tokens
         x = buf[:-1].view(self.batch, self.token_size)
         y = buf[1:].view(self.batch, self.token_size)
-        self.current_position += self.batch * self.token_size * self.process_rank
+
+        # When running with torchrun, we'll run N processes in parallel. Hence after a single next_batch()
+        # B * T * num_process tokens would have been processed. Update the current position by num_processes or the model will see same tokens and overfit.
+        self.current_position += self.batch * self.token_size * self.num_processes
 
         # When we run out of tokens begin from beginning
-        if self.current_position + (self.batch * self.token_size + self.process_rank + 1) > len(
+        if self.current_position + (self.batch * self.token_size + self.num_processes + 1) > len(
             self.tokens
         ):
-            self.current_position = 0
+            self.current_shard = (self.current_shard + 1) % len(self.shards)
+            self.tokens = self.load_tokens(self.shards[self.current_shard])
+            self.current_position = self.batch * self.token_size * self.process_rank
 
         return x, y
+    

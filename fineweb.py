@@ -46,7 +46,7 @@ def write_datafile(filename, tokens_np):
     np.save(filename, tokens_np)
 
 # Creation of shards with multiprocessing
-num_processes = mp.cpu_count()
+num_processes = max(1, mp.cpu_count() // 2)
 # Create a pool of processes for N CPUs
 with mp.Pool(num_processes) as pool:
     shard_index = 0

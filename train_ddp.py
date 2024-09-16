@@ -53,7 +53,12 @@ device_type = "cuda" if device.startswith("cuda") else "cpu"
 
 B = 16
 T = 1024
-max_steps = 50
+# max_steps = 50
+max_steps = 19072 # total number of tokens / number of tokens per step ==> 10e9 // 524288
+max_lr = 6e-4  # From GPT2 paper
+min_lr = max_lr * 0.1
+# warmup_steps = 10
+warmup_stpes = 715 # total number of tokens for warmup frmo gpt3 paper / total number of tokens per step ==> 375e6 // 524288
 total_batch_size = 524288  # 2**19 and divisible by B*T
 
 assert (
@@ -66,7 +71,7 @@ if master_process:
     print(f"Number of tokens processing in parallel: {B*T*ddp_world_size}")
 
 # create dataloader, comes above float32 matmul to avoid loading data in GPU
-data_loader = DataLoaderLite(input_file="input.txt", B=B, T=T, num_processes=ddp_world_size, process_rank=ddp_rank)
+train_loader = DataLoaderLite(input_file="input.txt", B=B, T=T, num_processes=ddp_world_size, process_rank=ddp_rank, split="train")
 
 # use TF32 tensor core, speeding up matmul
 torch.set_float32_matmul_precision("high")
@@ -103,8 +108,6 @@ optim = raw_model.configure_optimizers(
 for step in range(max_steps):
     loss_accum = 0
     t0 = time.time()
-    x, y = data_loader.next_batch()
-    x, y = x.to(device), y.to(device)
     # Optimizer zero grad
     optim.zero_grad(set_to_none=True)
     # Forward pass
@@ -114,6 +117,9 @@ for step in range(max_steps):
         if ddp:
             # This makes sure grads are not synchronized until last microstep
             model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
+
+        x, y = train_loader.next_batch()
+        x, y = x.to(device), y.to(device)
 
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
             logits, loss = raw_model(x, y)
@@ -134,7 +140,7 @@ for step in range(max_steps):
     # Clip gradient norm
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     # determine and set learning rate for this iteration
-    lr = get_lr(step)
+    lr = get_lr(step, warmup_steps, max_steps, max_lr, min_lr)
     # There's a notion in PyTorch where multiple param_groups might exist,
     # hence we're looping through them and setting the lr in below fashion
     for param_group in optim.param_groups:

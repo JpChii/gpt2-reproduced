@@ -1,11 +1,6 @@
 import math
 
-max_steps = 50
-max_lr = 6e-4  # From GPT2 paper
-min_lr = max_lr * 0.1
-warmup_steps = 10
-
-def get_lr(it):
+def get_lr(it, warmup_steps, max_steps, max_lr, min_lr):
     """_summary_
     * Linear warm up until 10 steps
         * cosine decay until a certain limit
