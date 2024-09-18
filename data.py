@@ -104,8 +104,8 @@ class DataLoaderLite:
     def load_tokens(self, filename):
         # Load numpy tokens file
         npt = np.load(filename)
-        npt = np.astype(npt, np.int32)
-        ptt = torch.from_numpy(npt, dtype=torch.long)
+        npt = npt.astype(npt, np.int32)
+        ptt = torch.tensor(npt, dtype=torch.long)
         return ptt
 
     def reset(self):
