@@ -43,6 +43,7 @@ def tokenize(doc):
     return tokens_np_unit16
 
 def write_datafile(filename, tokens_np):
+    print(f"Saving shard: {filename}")
     np.save(filename, tokens_np)
 
 # Creation of shards with multiprocessing

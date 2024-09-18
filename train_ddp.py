@@ -58,8 +58,8 @@ max_steps = 19072 # total number of tokens / number of tokens per step ==> 10e9 
 max_lr = 6e-4  # From GPT2 paper
 min_lr = max_lr * 0.1
 # warmup_steps = 10
-warmup_stpes = 715 # total number of tokens for warmup frmo gpt3 paper / total number of tokens per step ==> 375e6 // 524288
-total_batch_size = 524288  # 2**19 and divisible by B*T
+warmup_steps = 715 # total number of tokens for warmup frmo gpt3 paper / total number of tokens per step ==> 375e6 // 524288
+total_batch_size = 524288  # 2**19 and divisible by B*T, 0.5M tokens per step in GPT3 paper
 
 assert (
     total_batch_size % (B * T * ddp_world_size) == 0
