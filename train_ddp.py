@@ -71,7 +71,8 @@ if master_process:
     print(f"Number of tokens processing in parallel: {B*T*ddp_world_size}")
 
 # create dataloader, comes above float32 matmul to avoid loading data in GPU
-train_loader = DataLoaderLite(input_file="input.txt", B=B, T=T, num_processes=ddp_world_size, process_rank=ddp_rank, split="train")
+train_loader = DataLoaderLite(B=B, T=T, num_processes=ddp_world_size, process_rank=ddp_rank, split="train")
+val_loader = DataLoaderLite(B=B, T=T, num_processes=ddp_world_size, process_rank=ddp_rank, split="val")
 
 # use TF32 tensor core, speeding up matmul
 torch.set_float32_matmul_precision("high")
@@ -86,18 +87,13 @@ model = GPT2(GPTConfig).to(device)
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model
-# called DDP(model) before compile to allow torchdynamo to graph-break optimizations based on bucket sizes
-# https://pytorch.org/docs/stable/notes/ddp.html
-model = torch.compile(model)
+use_compile = False
+if use_compile: # torch.compile interferes with HellaSwag eval and Generation
+    # called DDP(model) before compile to allow torchdynamo to graph-break optimizations based on bucket sizes
+    # https://pytorch.org/docs/stable/notes/ddp.html
+    model = torch.compile(model)
 
-
-# Initialize optimizer
-# optim = torch.optim.AdamW(
-#     params=model.parameters(), # Parameters for backprop
-#     lr=6e-4, # This is good initial learning rate
-#     betas=(0.9, 0.95), # Betas from GPT3 paper
-#     eps=1e-8, # Eps from GPT3 paper, Default is also same
-# )
+# optimizer
 optim = raw_model.configure_optimizers(
     weight_decay=0.1,
     learning_rate=6e-4,
@@ -108,6 +104,72 @@ optim = raw_model.configure_optimizers(
 for step in range(max_steps):
     loss_accum = 0
     t0 = time.time()
+    last_step = (step == max_steps - 1)
+
+    # Evaluate validation loss once in a while
+    if step % 250 == 0 or last_step:
+        model.eval()
+        val_loader.reset()
+        with torch.no_grad():
+            val_loss_accum = 0.0
+            val_loss_steps = 20
+            for _ in range(val_loss_steps):
+                x, y = val_loader.next_batch()
+                x, y = x.to(device), y.to(device)
+                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                    logits, loss = model(x, y)
+                    loss = loss / val_loss_steps
+                    val_loss_accum += loss.detach()
+        
+        if ddp:
+            dist.all_reduct(val_loss_accum, op=dist.ReduceOp.AVG)
+
+        if master_process:
+            print(f"Valiation loss: {val_loss_accum.item():.4f}")
+
+    # Genearate once in a while(at step 0, model has no training)
+    if ((step > 0 and step % 250 == 0) or last_step) and (not use_compile):
+        model.eval()
+        num_return_sequences = 4
+        max_length = 32 # End text generation at sequence length of 32
+        # Encode tokens
+        tokens = val_loader.encoder.encode("Hello, I'm a a language model")
+        # Create reperating sequence of 4, 1
+        tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
+        xgen = tokens.to(device)
+
+        # Set sample seed unique for generation alone outside of training loop
+        rng = torch.Generator(device=device)
+        rng.manual_seed(42 + ddp_rank)
+
+        while xgen.size(1) < max_length:
+            # Forward pass
+            with torch.no_grad():
+                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                    logits, loss = model(xgen)
+                
+                # Take logits of last token in the batch
+                last_token_logits = logits[:, -1, :]
+                # Convert to probs
+                probs = torch.softmax(last_token_logits, dim=-1)
+                # top_k, 50 by default in huggingface pipeline
+                top_k_probs, top_k_indices = torch.topk(probs, k=50, dim=-1)
+
+                # Sample
+                next_token_ix = torch.multinomial(probs, num_samples=1, generator=rng) # (B, 1)
+
+                # Gather the corresponding indices
+                xcol = torch.gather(top_k_indices, -1, next_token_ix) # (B, 1)
+
+                # Append
+                xgen = torch.cat((xgen, xcol), dim=-1)
+
+        # print the generated text
+        for i in range(num_return_sequences):
+            tokens = xgen[i, :max_length].tolist()
+            decoded = val_loader.encoder.decode(tokens)
+            print(f"rank {ddp_rank} sample {i}: {decoded}")
+
     # Optimizer zero grad
     optim.zero_grad(set_to_none=True)
     # Forward pass
@@ -121,8 +183,9 @@ for step in range(max_steps):
         x, y = train_loader.next_batch()
         x, y = x.to(device), y.to(device)
 
+        # Mixed precision
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-            logits, loss = raw_model(x, y)
+            logits, loss = model(x, y)
 
         # Scale loss to account for gradient accumulation
         # because gradient just add on each successive backward().

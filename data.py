@@ -49,7 +49,7 @@ def create_data(B, T):
 
 # This is an improved version of create_data()
 class DataLoaderLite:
-    def __init__(self, input_file: str, B: int, T: int, num_processes: int, process_rank: int, split: str):
+    def __init__(self, B: int, T: int, num_processes: int, process_rank: int, split: str, input_file: str = None):
         """
         Initializes the DataLoaderLite class.
 
@@ -74,31 +74,33 @@ class DataLoaderLite:
         self.num_processes = num_processes
         assert split in ["train", "val"]
 
-        # Load the data
-        assert os.path.exists(input_file), f"{input_file} does not exist"
-        with open(input_file, "r") as file:
-            data = file.read()
-
         # Encode the data
         self.encoder = tiktoken.get_encoding("gpt2")
-        self.tokens = self.encoder.encode(data)
-        self.tokens = torch.tensor(self.tokens)
 
-        if self.process_rank == 0:
-            # Calculate number of batches with B, T dimensions
-            print(f"Number of tokens: {len(self.tokens)}")
-            print(
-                f"Total number of batches per epoch: {len(self.tokens) // (self.batch * self.token_size)}"
-            )
+        if input_file:
+            # Load the data
+            assert os.path.exists(input_file), f"{input_file} does not exist"
+            with open(input_file, "r") as file:
+                data = file.read()
+            self.tokens = self.encoder.encode(data)
+            self.tokens = torch.tensor(self.tokens)
+        
+        else:
+            # Load shards
+            data_roor_dir = "edu_fineweb10B"
+            data_shards = os.listdir(data_roor_dir)
+            shards_split = [s for s in data_shards if split in s] # filter shards based on split
+            shards = [os.path.join(data_roor_dir, s) for s in shards_split]
+            self.shards = shards
+            assert len(self.shards) > 0, "No shards found"
+            self.reset()
 
-        # Load shards
-        data_roor_dir = "edu_fineweb10B"
-        data_shards = os.listdir(data_roor_dir)
-        shards_split = [s for s in data_shards if split in s] # filter shards based on split
-        shards = [os.path.join(data_roor_dir, s) for s in shards_split]
-        self.shards = shards
-        assert len(self.shards) > 0, "No shards found"
-        self.reset()
+            if self.process_rank == 0:
+                # Calculate number of batches with B, T dimensions
+                print(f"Number of tokens: {len(self.tokens)}")
+                print(
+                    f"Total number of batches per epoch: {len(self.tokens) // (self.batch * self.token_size)}"
+                )
 
     @classmethod
     def load_tokens(self, filename):
