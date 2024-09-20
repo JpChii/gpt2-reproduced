@@ -188,10 +188,23 @@ def evaluate(model_type, device):
         logits = model(tokens).logits
 
         # Evaluate the autoregressive loss at all positions
-        shift_logits = (logits[..., :-1, :1]).contiguous() # Exclude last logit
+        shift_logits = (logits[..., :-1, :]).contiguous() # Exclude last logit
         shift_tokens = (tokens[..., 1:]).contiguous() # Exclude first token as it's prompt
         flat_shift_logits = shift_logits.view(-1, shift_logits.size(-1)) # Flatten logits along token dimension
         flat_shift_tokens = shift_tokens.view(-1) # Flatten tokens along token dimension
+
+        # # Print original shapes
+        # print(f"Logits: {logits.shape}")
+        # print(f"Tokens: {tokens.shape}")
+
+        # # print unflatten shift shapes
+        # print(f"Shift logits: {shift_logits.shape}")
+        # print(f"Shift tokens shape: {shift_tokens.shape}")
+
+        # # Print shapes
+        # print(f"flat_shift_tokens: {flat_shift_tokens.shape}")
+        # print(f"flat_shift_logits: {flat_shift_logits.shape}")
+
 
         # Calculate loss
         shift_losses = F.cross_entropy(flat_shift_logits, flat_shift_tokens, reduction="none")
@@ -214,6 +227,8 @@ def evaluate(model_type, device):
         num_correct_norm += int(pred_norm == label)
         num_correct += int(pred == label)
         print(f"{num_total} acc_norm: {num_correct_norm}/{num_total}={num_correct_norm/num_total:.4f}")
+
+        break
 
     # debug: pretty print a few examples, and the losses in each case
     if num_total < 10:

@@ -5,7 +5,8 @@ from torch import distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from gpt2 import GPT2, GPTConfig
 from data import DataLoaderLite
-from utils import get_lr
+from utils import get_lr, get_most_likey_row
+from hellaswag import iterate_examples, render_example
 
 # DDP Launch 2 GPUs
 # torchrun --standalone --nproc_per_node=2 train_ddp.py
@@ -126,6 +127,41 @@ for step in range(max_steps):
 
         if master_process:
             print(f"Valiation loss: {val_loss_accum.item():.4f}")
+
+    # Run hellaswag once in a while
+    if ((step > 0 and step % 250 ==0) or last_step) and (not use_compile):
+        num_correct_norm = 0
+        num_total = 0
+        for i, example in enumerate(iterate_examples(split="val")):
+
+            # DDP setting, unqiue samples for each process
+            if i % ddp_world_size != ddp_rank:
+                continue
+
+            # Render example to get the most proabale row
+            _, tokens, mask, label = render_example(example)
+
+            tokens, logits = tokens.to(device), logits.to(device)
+            
+            with torch.no_grad():
+                with torch.autocast(device_type=device_type, dtype=torch.float16):
+                    logits, loss = model(tokens)
+                pred_norm = get_most_likey_row(tokens, mask, logits)
+
+            num_total += 1
+            num_correct_norm += (label == pred_norm)
+
+        # Reduce stats across all processes
+        if ddp:
+            num_total = torch.tensor(num_total, dtype=torch.long, device=device)
+            num_correct_norm = torch.tensor(num_correct_norm, dtype=torch.long, device=device)
+            dist.all_reduce(num_total, op=dist.ReduceOp.SUM)
+            dist.all_reduce(num_correct_norm, op=dist.ReduceOp.SUM)
+            num_total = num_total.item()
+            num_correct_norm = num_correct_norm.item()
+        acc_norm = num_correct_norm / num_total
+        if master_process:
+            print(f"HellaSwag accuracy: {num_correct_norm}/{num_total}={acc_norm:.4f}")
 
     # Genearate once in a while(at step 0, model has no training)
     if ((step > 0 and step % 250 == 0) or last_step) and (not use_compile):
